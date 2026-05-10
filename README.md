@@ -1,16 +1,16 @@
 <p align="center">
   <img src="assets/cover_small.png" alt="Chat with Your Photos" width="60%">
 </p>
-<p align="center"><strong>Ask natural-language questions about your personal photo collection directly from the terminal.</strong></p>
+<p align="center">Ask natural-language questions about your personal photo collection directly from the terminal.</p>
 
 ---
 
-<p align="center"><strong>Demo</strong></p>
+<p align="center">Demo</p>
 <p align="center">
   <img src="assets/demo.gif" alt="Demo" width="60%">
 </p>
 
-**No manual annotations needed! Your photos already contain all required information!**
+*No manual annotations needed! Your photos already contain all required information!*
 
 Example questions:
 ```
@@ -25,8 +25,6 @@ The app indexes your photos once (reading EXIF metadata and labeling each image)
 The index is a single CSV file stored on your file system. No embeddings or database needed!
 
 The app can be run using popular LLM APIs or fully local using Ollama.
-
----
 
 ## Getting started
 
