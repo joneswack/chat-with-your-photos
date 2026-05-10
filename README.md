@@ -8,11 +8,10 @@
 
 Ask natural-language questions about your personal photo collection directly from the terminal.
 
-**Demo**
-
 <p align="center">
   <img src="assets/demo.gif" alt="Demo" width="60%">
 </p>
+<p align="center"><strong>Demo</strong></p>
 
 **No manual annotations needed! Your photos already contain all required information!**
 
