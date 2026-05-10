@@ -1,10 +1,9 @@
 <p align="center">
-  <img src="assets/cover.png" alt="Chat with Your Photos" width="60%">
+  <img src="assets/cover_small.png" alt="Chat with Your Photos" width="60%">
 </p>
+<p align="center"><strong>Ask natural-language questions about your personal photo collection directly from the terminal.</strong></p>
 
-*Asking question about collections of text was yesterday. Chat with your photos instead!*
-
-Ask natural-language questions about your personal photo collection directly from the terminal.
+---
 
 <p align="center"><strong>Demo</strong></p>
 <p align="center">
