@@ -43,7 +43,7 @@ Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
 uv sync
-uv run cwyp
+uv run chatwithyourphotos
 ```
 
 On first launch, choose **Add a new folder** and point it at your photos directory. The app walks the folder, reads EXIF data, labels every image, and saves an index. Subsequent launches can go straight to the chat with this collection.
