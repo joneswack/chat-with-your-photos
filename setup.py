@@ -1,9 +1,8 @@
-import base64
 import csv
-import io
 import re
 import sys
 from pathlib import Path
+from typing import Callable
 
 import pycountry
 import reverse_geocoder as rg
@@ -14,7 +13,9 @@ from pydantic import BaseModel
 from tqdm import tqdm
 
 from utils import (
+    IMAGE_EXTENSIONS,
     anthropic_models,
+    encode_jpeg_b64,
     ollama_models,
     openai_models,
     pick,
@@ -29,8 +30,6 @@ _EXIF_DATE_TAKEN = 36867  # DateTimeOriginal — when the shutter fired
 _EXIF_DATE_MODIFIED = 306  # DateTime — file modification time (fallback)
 _EXIF_GPS_IFD = 34853
 
-_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic"}
-
 FIELDNAMES = [
     "relative_file_path",
     "label",
@@ -43,13 +42,21 @@ FIELDNAMES = [
     "city",
 ]
 
+# A Labeler turns (PIL image, optional location hint) into a (label, description) pair.
+Labeler = Callable[[Image.Image, str], tuple[str, str]]
+
 
 class ImageDescription(BaseModel):
     label: str
     description: str
 
 
-def get_timestamp(exif) -> str:
+# ---------------------------------------------------------------------------
+# EXIF
+# ---------------------------------------------------------------------------
+
+
+def _get_timestamp(exif) -> str:
     """Return the capture timestamp string from EXIF data, or empty string if absent."""
     for tag in (_EXIF_DATE_TAKEN, _EXIF_DATE_MODIFIED):
         val = exif.get(tag)
@@ -58,15 +65,13 @@ def get_timestamp(exif) -> str:
     return ""
 
 
-def get_gps_coords(exif) -> tuple[float, float] | None:
-    """Return (latitude, longitude) in decimal degrees from EXIF GPS data, or None."""
+def _get_gps_coords(exif) -> tuple[float, float] | None:
+    """Return (latitude, longitude) in decimal degrees, or None if no GPS data."""
     gps_ifd = exif.get_ifd(_EXIF_GPS_IFD)
     if not gps_ifd:
         return None
-    lat_ref = gps_ifd.get(1)
-    lat = gps_ifd.get(2)
-    lon_ref = gps_ifd.get(3)
-    lon = gps_ifd.get(4)
+    lat_ref, lat = gps_ifd.get(1), gps_ifd.get(2)
+    lon_ref, lon = gps_ifd.get(3), gps_ifd.get(4)
     if not all([lat_ref, lat, lon_ref, lon]):
         return None
 
@@ -80,108 +85,152 @@ def get_gps_coords(exif) -> tuple[float, float] | None:
     )
 
 
-def encode_image(img: Image.Image) -> str:
-    """Encode a PIL image as a base64 JPEG string."""
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    return base64.b64encode(buf.getvalue()).decode("utf-8")
+# ---------------------------------------------------------------------------
+# LLM labeling
+# ---------------------------------------------------------------------------
 
 
-def _parse_llm_json(text: str) -> ImageDescription:
-    """Extract JSON from LLM response, tolerating markdown code fences."""
-    m = re.search(r"\{.*?\}", text, re.DOTALL)
-    raw = m.group(0) if m else text
-    return ImageDescription.model_validate_json(raw)
-
-
-def label_with_llm(
-    img: Image.Image, location: str, provider: str, model_name: str
-) -> tuple[str, str]:
-    """Ask an LLM to produce a (label, description) pair for the given image."""
+def _build_prompt(location: str) -> str:
     location_hint = (
         f" The photo was taken in {location}, which can help you label the image more precisely."
         if location
         else ""
     )
-    prompt = (
+    return (
         f"Extract a label (max. 3 words) and a short one-sentence description from the photo."
         f"{location_hint} Respond with JSON only: "
         '{"label": "...", "description": "..."}'
     )
 
-    if provider == "ollama":
-        from ollama import chat
 
-        response = chat(
-            model=model_name,
-            messages=[
-                {"role": "user", "content": prompt, "images": [encode_image(img)]}
-            ],
-            think=False,
-            format=ImageDescription.model_json_schema(),
-            options={"temperature": 0},
-        )
-        desc = ImageDescription.model_validate_json(
-            response.message.content or '{"label": "", "description": ""}'
-        )
-        return desc.label, desc.description
+def _parse_llm_json(text: str) -> ImageDescription:
+    """Extract JSON from an LLM response, tolerating markdown code fences."""
+    m = re.search(r"\{.*?\}", text, re.DOTALL)
+    return ImageDescription.model_validate_json(m.group(0) if m else text)
 
-    b64 = encode_image(img)
 
-    if provider == "anthropic":
-        import anthropic
-        from anthropic.types import TextBlock
+def _label_with_ollama(
+    img: Image.Image, location: str, model_name: str
+) -> tuple[str, str]:
+    from ollama import chat
 
-        client = anthropic.Anthropic()
-        msg = client.messages.create(
-            model=model_name,
-            max_tokens=200,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/jpeg",
-                                "data": b64,
-                            },
+    response = chat(
+        model=model_name,
+        messages=[
+            {
+                "role": "user",
+                "content": _build_prompt(location),
+                "images": [encode_jpeg_b64(img)],
+            }
+        ],
+        think=False,
+        format=ImageDescription.model_json_schema(),
+        options={"temperature": 0},
+    )
+    desc = ImageDescription.model_validate_json(
+        response.message.content or '{"label": "", "description": ""}'
+    )
+    return desc.label, desc.description
+
+
+def _label_with_anthropic(
+    img: Image.Image, location: str, model_name: str
+) -> tuple[str, str]:
+    import anthropic
+    from anthropic.types import TextBlock
+
+    msg = anthropic.Anthropic().messages.create(
+        model=model_name,
+        max_tokens=200,
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": encode_jpeg_b64(img),
                         },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-        )
-        text_block = next(b for b in msg.content if isinstance(b, TextBlock))
-        desc = _parse_llm_json(text_block.text)
-        return desc.label, desc.description
+                    },
+                    {"type": "text", "text": _build_prompt(location)},
+                ],
+            }
+        ],
+    )
+    text_block = next(b for b in msg.content if isinstance(b, TextBlock))
+    desc = _parse_llm_json(text_block.text)
+    return desc.label, desc.description
 
-    if provider == "openai":
-        import openai
 
-        client = openai.OpenAI()
-        response = client.chat.completions.create(
-            model=model_name,
-            max_tokens=200,
-            response_format={"type": "json_object"},
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+def _label_with_openai(
+    img: Image.Image, location: str, model_name: str
+) -> tuple[str, str]:
+    import openai
+
+    response = openai.OpenAI().chat.completions.create(
+        model=model_name,
+        max_tokens=200,
+        response_format={"type": "json_object"},
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{encode_jpeg_b64(img)}"
                         },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-        )
-        desc = _parse_llm_json(response.choices[0].message.content or "")
-        return desc.label, desc.description
+                    },
+                    {"type": "text", "text": _build_prompt(location)},
+                ],
+            }
+        ],
+    )
+    desc = _parse_llm_json(response.choices[0].message.content or "")
+    return desc.label, desc.description
 
-    return "", ""
+
+_LLM_LABELERS = {
+    "ollama": _label_with_ollama,
+    "anthropic": _label_with_anthropic,
+    "openai": _label_with_openai,
+}
+
+
+def _make_timm_labeler() -> Labeler:
+    import timm
+    import timm.data
+    import torch
+    from timm.data.imagenet_info import ImageNetInfo
+
+    model = timm.create_model(
+        "timm/vit_base_patch16_224.augreg_in21k", pretrained=True
+    ).eval()
+    config = timm.data.resolve_model_data_config(model)
+    transforms = timm.data.create_transform(**config, is_training=False)
+    info = ImageNetInfo("imagenet21k")
+
+    def label(img: Image.Image, _location: str) -> tuple[str, str]:
+        with torch.no_grad():
+            output = model(transforms(img).unsqueeze(0))
+        return info.index_to_description(int(output.argmax(dim=1).item())), ""
+
+    return label
+
+
+def _make_labeler(provider: str, model_name: str) -> Labeler:
+    """Return a callable (img, location) -> (label, description) for the chosen provider."""
+    if provider == "timm":
+        return _make_timm_labeler()
+    fn = _LLM_LABELERS[provider]
+    return lambda img, loc: fn(img, loc, model_name)
+
+
+# ---------------------------------------------------------------------------
+# User input
+# ---------------------------------------------------------------------------
 
 
 def _ask_folder() -> Path:
@@ -215,9 +264,14 @@ def _pick_model() -> tuple[str, str, str]:
     for mid in openai_models():
         models[f"{mid}  (openai · LLM captioning)"] = ("openai", mid)
 
-    model_key = pick("Select vision model for labeling:", list(models))
-    provider, model_name = models[model_key]
-    return provider, model_name, model_key.split("(")[0].strip()
+    key = pick("Select vision model for labeling:", list(models))
+    provider, model_name = models[key]
+    return provider, model_name, key.split("(")[0].strip()
+
+
+# ---------------------------------------------------------------------------
+# Indexing pipeline
+# ---------------------------------------------------------------------------
 
 
 def _collect_image_paths(images_dir: Path) -> list[Path]:
@@ -225,7 +279,7 @@ def _collect_image_paths(images_dir: Path) -> list[Path]:
     return sorted(
         p
         for p in images_dir.rglob("*")
-        if p.suffix.lower() in _IMAGE_EXTENSIONS and ".cwyp" not in p.parts
+        if p.suffix.lower() in IMAGE_EXTENSIONS and ".cwyp" not in p.parts
     )
 
 
@@ -238,8 +292,8 @@ def _extract_metadata(
     coords_list: list[tuple[float, float] | None] = []
     for path in tqdm(image_paths, unit="img"):
         exif = Image.open(path).getexif()
-        timestamps.append(get_timestamp(exif))
-        coords_list.append(get_gps_coords(exif))
+        timestamps.append(_get_timestamp(exif))
+        coords_list.append(_get_gps_coords(exif))
     return timestamps, coords_list
 
 
@@ -248,17 +302,17 @@ def _reverse_geocode(
 ) -> list[dict | None]:
     """Batch reverse-geocode GPS coordinates; returns a parallel list of geo dicts."""
     geo_data: list[dict | None] = [None] * len(coords_list)
-    gps_indices = [i for i, c in enumerate(coords_list) if c is not None]
-    gps_coords = [c for c in coords_list if c is not None]
-    if gps_indices:
-        results = rg.search(gps_coords, verbose=False)
-        for i, result in zip(gps_indices, results):
-            country_obj = pycountry.countries.get(alpha_2=result["cc"])
-            geo_data[i] = {
-                "country": country_obj.name if country_obj else result["cc"],
-                "region": result["admin1"],
-                "city": result["name"],
-            }
+    indices = [i for i, c in enumerate(coords_list) if c is not None]
+    coords = [c for c in coords_list if c is not None]
+    if not indices:
+        return geo_data
+    for i, result in zip(indices, rg.search(coords, verbose=False)):
+        country_obj = pycountry.countries.get(alpha_2=result["cc"])
+        geo_data[i] = {
+            "country": country_obj.name if country_obj else result["cc"],
+            "region": result["admin1"],
+            "city": result["name"],
+        }
     return geo_data
 
 
@@ -268,24 +322,10 @@ def _label_images(
     timestamps: list[str],
     coords_list: list[tuple[float, float] | None],
     geo_data: list[dict | None],
-    provider: str,
-    model_name: str,
+    labeler: Labeler,
     model_label: str,
 ) -> list[dict[str, str]]:
     """Label every image and return the list of CSV rows."""
-    if provider == "timm":
-        import timm
-        import timm.data
-        import torch
-        from timm.data.imagenet_info import ImageNetInfo
-
-        timm_model = timm.create_model(
-            "timm/vit_base_patch16_224.augreg_in21k", pretrained=True
-        ).eval()
-        config = timm.data.resolve_model_data_config(timm_model)
-        transforms = timm.data.create_transform(**config, is_training=False)
-        info = ImageNetInfo("imagenet21k")
-
     rows: list[dict[str, str]] = []
     print(f"Labeling with {model_label}...")
     for path, timestamp, coords, geo in tqdm(
@@ -294,17 +334,7 @@ def _label_images(
         unit="img",
     ):
         img = ImageOps.exif_transpose(Image.open(path)).convert("RGB")
-
-        if provider == "timm":
-            with torch.no_grad():
-                output = timm_model(transforms(img).unsqueeze(0))
-            label = info.index_to_description(int(output.argmax(dim=1).item()))
-            description = ""
-        else:
-            label, description = label_with_llm(
-                img, geo["country"] if geo else "", provider, model_name
-            )
-
+        label, description = labeler(img, geo["country"] if geo else "")
         rows.append(
             {
                 "relative_file_path": str(path.relative_to(images_dir)),
@@ -319,6 +349,11 @@ def _label_images(
             }
         )
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Entry points
+# ---------------------------------------------------------------------------
 
 
 def main() -> None:
@@ -340,9 +375,15 @@ def _run() -> None:
     image_paths = _collect_image_paths(images_dir)
     timestamps, coords_list = _extract_metadata(image_paths)
     geo_data = _reverse_geocode(coords_list)
+    labeler = _make_labeler(provider, model_name)
     rows = _label_images(
-        image_paths, images_dir, timestamps, coords_list, geo_data,
-        provider, model_name, model_label,
+        image_paths,
+        images_dir,
+        timestamps,
+        coords_list,
+        geo_data,
+        labeler,
+        model_label,
     )
 
     with output_csv.open("w", newline="") as f:

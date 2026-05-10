@@ -1,7 +1,14 @@
 # Chat with Your Photos
 
-Ask natural-language questions about your personal photo collection from the terminal.
+*Asking question about collections of text was yesterday. Chat with your photos instead!*
 
+![Demo](assets/demo.gif)
+
+Ask natural-language questions about your personal photo collection directly from the terminal.
+
+**No manual annotations needed! Your photos already contain all required information!**
+
+Example questions:
 ```
 > "What places did I visit?"
 > "How many photos did I take in the last 7 days of my trip?"
@@ -11,22 +18,15 @@ Ask natural-language questions about your personal photo collection from the ter
 ```
 
 The app indexes your photos once (reading EXIF metadata and labeling each image), then lets an LLM agent answer queries against that index — fast, without loading every image at query time.
+The index is a single CSV file stored on your file system. No embeddings or database needed!
 
-The app can be run using popular LLM APIs or fully local using Ollama. No embeddings are used.
+The app can be run using popular LLM APIs or fully local using Ollama.
 
 ---
 
 ## Getting started
 
-**1. Install dependencies**
-
-Requires [uv](https://docs.astral.sh/uv/).
-
-```bash
-uv sync
-```
-
-**2. Setup LLM provider**
+**1. Setup LLM provider**
 
 For Anthropic or OpenAI models, create a `.env` file in the project root and add one of:
 
@@ -37,9 +37,12 @@ OPENAI_API_KEY=...
 
 For [Ollama](https://ollama.com), simply install Ollama and download the desired model, e.g., [gemma4:e2b](https://ollama.com/library/gemma4:e2b).
 
-**3. Run**
+**2. Run**
+
+Requires [uv](https://docs.astral.sh/uv/).
 
 ```bash
+uv sync
 uv run cwyp
 ```
 

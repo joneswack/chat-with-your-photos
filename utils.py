@@ -1,3 +1,5 @@
+import base64
+import io
 import os
 import re
 import subprocess
@@ -5,6 +7,25 @@ import sys
 import termios
 import tty
 from pathlib import Path
+from typing import Any
+
+from PIL import Image
+
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".heic"}
+
+REGISTRY = Path.home() / ".cwyp" / "folders.txt"
+
+
+def encode_jpeg_b64(img: Image.Image) -> str:
+    """Encode a PIL image as a base64 JPEG string."""
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return base64.b64encode(buf.getvalue()).decode()
+
+
+def join_nonempty(*parts: Any, sep: str = ", ") -> str:
+    """Join string parts, skipping anything that isn't a non-blank string."""
+    return sep.join(p for p in parts if isinstance(p, str) and p.strip())
 
 
 def pick(prompt: str, options: list[str]) -> str:
@@ -128,9 +149,6 @@ def ollama_models() -> list[str]:
         return [line.split()[0] for line in lines[1:] if line.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired, IndexError):
         return []
-
-
-REGISTRY = Path.home() / ".cwyp" / "folders.txt"
 
 
 def register_folder(folder: Path) -> None:

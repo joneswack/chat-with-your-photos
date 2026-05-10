@@ -25,7 +25,13 @@ dependencies = [
 ]
 
 [project.scripts]
-cwyp = "main:main"
+chatwithyourphotos = "main:main"
 
 [tool.hatch.build.targets.wheel]
 include = ["main.py", "agent.py", "setup.py", "utils.py"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.12",
+    "ty>=0.0.34",
+]

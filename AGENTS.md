@@ -87,10 +87,22 @@ Make sure ollama is installed if using ollama models.
 
 ---
 
-## Conventions
+## Design Principles
 
 - **No interactive UI** — the agent is a terminal REPL; keep it that way unless asked.
-- **Index allows for quick navigation** — `agent.py` initially operates on the index via pandas functions to be quick. It only investigates images directly when needed.
-- **Compact index** — each row must be short enough that the agent can reason over many rows in one context window. Avoid multi-sentence free-text columns.
+- **Index allows for quick navigation** — `agent.py` initially operates on the CSV index via pandas functions to be quick. It only investigates images directly when needed.
+- **Compact index** — each row must be short enough that the agent can reason over many rows in one context window. Avoid multi-sentence free-text columns. The CSV index should be lightweight.
+
+---
+
+## Code Guidelines
+
 - **Python 3.12+**, managed with `uv`. Do not use `pip` or `conda`.
+
+- **Code quality**: After making changes to a file, run:
+  - ``ruff check <filename>`` for linting.
+  - ``ruff format <filename>`` for formatting.
+  - ``ty check <filename>`` for static type checking.
+- If errors appear, fix them.
+
 - **Agent construction** — use `from langchain.agents import create_agent`, not `from langgraph.prebuilt import create_react_agent` (deprecated since LangGraph v1.0).
