@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/cover.png" alt="Chat with Your Photos" width="100%">
+  <img src="assets/cover.png" alt="Chat with Your Photos" width="60%">
 </p>
 
 # Chat with Your Photos
@@ -8,8 +8,10 @@
 
 Ask natural-language questions about your personal photo collection directly from the terminal.
 
+**Demo**
+
 <p align="center">
-  <img src="assets/demo.gif" alt="Demo" width="85%">
+  <img src="assets/demo.gif" alt="Demo" width="60%">
 </p>
 
 **No manual annotations needed! Your photos already contain all required information!**
